@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# tpnsfand - fan control for ThinkPads with non-standard EC fan registers
+# Copyright (C) 2026 Tobias Eggert (https://tobiaseggert.com)
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License, version 2,
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, see https://www.gnu.org/licenses/.
+#
+
+set -u
+
+VERSION=0.1
+
+INTERVAL=${TPNSFAND_INTERVAL:-0.5}
+
+# fan on/off (hysteresis)
+TEMP_FAN_ON=${TPNSFAND_TEMP_FAN_ON:-65}
+TEMP_FAN_OFF=${TPNSFAND_TEMP_FAN_OFF:-55}
+# control host<->EC (hysteresis)
+TEMP_CTRL_EC=${TPNSFAND_TEMP_CTRL_EC:-75}
+TEMP_CTRL_HOST=${TPNSFAND_TEMP_CTRL_HOST:-70}
+
+RPM_LOW=${TPNSFAND_RPM_LOW:-2000}
+RPM_HIGH=${TPNSFAND_RPM_HIGH:-4165}
+
+EC_IO=${TPNSFAND_EC_IO:-/sys/kernel/debug/ec/ec0/io}
+REG_CTRL=${TPNSFAND_REG_CTRL:-147}
+REG_SPEED=${TPNSFAND_REG_SPEED:-148}
+CTRL_HOST=${TPNSFAND_CTRL_HOST:-20}
+CTRL_EC=${TPNSFAND_CTRL_EC:-4}
+SPEED_MIN=${TPNSFAND_SPEED_MIN:-80}
+SPEED_MAX=${TPNSFAND_SPEED_MAX:-248}
+SPEED_OFF=${TPNSFAND_SPEED_OFF:-250}
+
+TEMP_PATHS=()
+
+ec_read() {
+  dd if="$EC_IO" bs=1 skip="$1" count=1 status=none 2>/dev/null | od -An -tu1 | tr -d ' '
+}
+
+ec_write() {
+  printf "\\x$(printf '%02x' "$2")" | dd of="$EC_IO" bs=1 seek="$1" count=1 conv=notrunc status=none 2>/dev/null
+}
+
+# resolve coretemp package and nvme from hwmon sysfs
+find_temp_inputs() {
+  local h name lbl inp
+  for h in /sys/class/hwmon/hwmon*; do
+    name=$(cat "$h/name" 2>/dev/null) || continue
+    if [ "$name" = coretemp ]; then
+      for lbl in "$h"/temp*_label; do
+        [ -e "$lbl" ] || continue
+        if [ "$(cat "$lbl")" = "Package id 0" ]; then
+          TEMP_PATHS+=("${lbl/_label/_input}")
+        fi
+      done
+    elif [ "$name" = nvme ]; then
+      inp="$h/temp1_input"
+      [ -e "$inp" ] && TEMP_PATHS+=("$inp")
+    fi
+  done
+}
+
+# control value = max(package, nvme) in degrees C; empty on read error
+read_regtemp() {
+  local p v max=""
+  for p in "${TEMP_PATHS[@]}"; do
+    v=$(cat "$p" 2>/dev/null) || continue
+    [[ $v =~ ^[0-9]+$ ]] || continue
+    v=$((v / 1000))
+    if [ -z "$max" ] || [ "$v" -gt "$max" ]; then
+      max=$v
+    fi
+  done
+  echo "$max"
+}
+
+# temperature -> 0x94 via RPM ramp
+ramp_reg() {
+  local t=$1 rpm reg
+  [ "$t" -lt "$TEMP_FAN_ON" ] && t=$TEMP_FAN_ON
+  [ "$t" -gt "$TEMP_CTRL_EC" ] && t=$TEMP_CTRL_EC
+  rpm=$(( RPM_LOW + (t - TEMP_FAN_ON) * (RPM_HIGH - RPM_LOW) / (TEMP_CTRL_EC - TEMP_FAN_ON) ))
+  reg=$(( (491520 + rpm / 2) / rpm ))
+  # clamp into controllable band (low value = fast, high = slow)
+  [ "$reg" -lt "$SPEED_MIN" ] && reg=$SPEED_MIN
+  [ "$reg" -gt "$SPEED_MAX" ] && reg=$SPEED_MAX
+  echo "$reg"
+}
+
+# mode transition with hysteresis
+next_mode() {
+  local mode=$1 t=$2
+  if [ "$mode" = EC ]; then
+    if [ "$t" -lt "$TEMP_CTRL_HOST" ]; then
+      if [ "$t" -lt "$TEMP_FAN_OFF" ]; then echo OFF; else echo RAMP; fi
+    else
+      echo EC
+    fi
+    return
+  fi
+  if [ "$t" -ge "$TEMP_CTRL_EC" ]; then
+    echo EC
+    return
+  fi
+  if [ "$mode" = OFF ]; then
+    if [ "$t" -ge "$TEMP_FAN_ON" ]; then echo RAMP; else echo OFF; fi
+    return
+  fi
+  if [ "$t" -lt "$TEMP_FAN_OFF" ]; then echo OFF; else echo RAMP; fi
+}
+
+restore() {
+  ec_write "$REG_CTRL" "$CTRL_EC"
+  echo "control returned to EC"
+}
+
+echo "tpnsfand $VERSION"
+
+[ -e "$EC_IO" ] || { echo "EC io $EC_IO missing (ec_sys not active?)" >&2; exit 1; }
+
+if [ -r /sys/module/ec_sys/parameters/write_support ]; then
+  ws=$(cat /sys/module/ec_sys/parameters/write_support)
+  if [ "$ws" != Y ] && [ "$ws" != 1 ]; then
+    echo "ec_sys.write_support=$ws -- EC writes blocked" >&2
+    exit 1
+  fi
+else
+  echo "write_support not verifiable, continuing" >&2
+fi
+
+find_temp_inputs
+if [ "${#TEMP_PATHS[@]}" -eq 0 ]; then
+  echo "no temperature source found" >&2
+  exit 1
+fi
+echo "sensors: ${TEMP_PATHS[*]}"
+
+trap restore EXIT
+trap 'exit 0' INT TERM
+
+mode=OFF
+last_speed=""
+while true; do
+  t=$(read_regtemp)
+
+  # fail-safe: no temperature -> EC
+  if [ -z "$t" ]; then
+    if [ "$(ec_read "$REG_CTRL")" != "$CTRL_EC" ]; then
+      ec_write "$REG_CTRL" "$CTRL_EC"
+      echo "sensor unreadable -> EC auto"
+    fi
+    mode=EC
+    last_speed=""
+    sleep "$INTERVAL"
+    continue
+  fi
+
+  new=$(next_mode "$mode" "$t")
+  if [ "$new" != "$mode" ]; then
+    echo "mode $mode -> $new at ${t}C"
+    mode=$new
+    [ "$mode" = EC ] && last_speed=""
+  fi
+
+  if [ "$mode" = EC ]; then
+    [ "$(ec_read "$REG_CTRL")" != "$CTRL_EC" ] && ec_write "$REG_CTRL" "$CTRL_EC"
+  else
+    # ensure host control (self-heals suspend/resume)
+    if [ "$(ec_read "$REG_CTRL")" != "$CTRL_HOST" ]; then
+      ec_write "$REG_CTRL" "$CTRL_HOST"
+      last_speed=""
+    fi
+    if [ "$mode" = OFF ]; then
+      speed=$SPEED_OFF
+    else
+      speed=$(ramp_reg "$t")
+    fi
+    if [ "$speed" != "$last_speed" ]; then
+      ec_write "$REG_SPEED" "$speed"
+      last_speed=$speed
+    fi
+  fi
+
+  sleep "$INTERVAL"
+done

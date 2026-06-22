@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+set -u
+
+EC_IO=/sys/kernel/debug/ec/ec0/io
+REG_CTRL=147
+REG_SPEED=148
+REG_TACHO=149
+IDLE_SECS=30
+STRESS_SECS=120
+FMT='%-8s %-6s %4s %4s %4s %6s %4s %5s\n'
+OUT=""
+
+CPU_INPUT=""
+NVME_INPUT=""
+sp=""
+
+cleanup() {
+  [ -n "$sp" ] && kill "$sp" 2>/dev/null
+}
+trap cleanup EXIT INT TERM
+
+ec_read() {
+  dd if="$EC_IO" bs=1 skip="$1" count=1 status=none 2>/dev/null | od -An -tu1 | tr -d ' '
+}
+
+read_temp() {
+  local p=$1 v
+  [ -n "$p" ] || { echo "n/a"; return; }
+  v=$(cat "$p" 2>/dev/null) || { echo "n/a"; return; }
+  [[ $v =~ ^[0-9]+$ ]] || { echo "n/a"; return; }
+  echo $((v / 1000))
+}
+
+# pick coretemp package and nvme inputs from hwmon
+find_inputs() {
+  local h name lbl
+  for h in /sys/class/hwmon/hwmon*; do
+    name=$(cat "$h/name" 2>/dev/null) || continue
+    if [ "$name" = coretemp ] && [ -z "$CPU_INPUT" ]; then
+      for lbl in "$h"/temp*_label; do
+        [ -e "$lbl" ] || continue
+        [ "$(cat "$lbl")" = "Package id 0" ] && CPU_INPUT="${lbl/_label/_input}"
+      done
+    elif [ "$name" = nvme ] && [ -z "$NVME_INPUT" ]; then
+      [ -e "$h/temp1_input" ] && NVME_INPUT="$h/temp1_input"
+    fi
+  done
+}
+
+header() {
+  local bios
+  bios=$(dmidecode -s bios-version 2>/dev/null)
+  {
+    echo "# tpnsfand compatibility report"
+    echo "# date:          $(date -Is)"
+    echo "# product:       $(dmidecode -s system-version 2>/dev/null) / $(dmidecode -s system-product-name 2>/dev/null)"
+    echo "# bios:          $bios (LNV3: ${bios:0:3})"
+    echo "# kernel:        $(uname -r)"
+    echo "# distro:        $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")"
+    echo "# write_support: $(cat /sys/module/ec_sys/parameters/write_support 2>/dev/null || echo n/a)"
+    echo "# lockdown:      $(cat /sys/kernel/security/lockdown 2>/dev/null || echo n/a)"
+    echo "# secure_boot:   $(mokutil --sb-state 2>/dev/null | head -1 || echo n/a)"
+    echo "# ibm_fan:       $(tr '\n' ' ' < /proc/acpi/ibm/fan 2>/dev/null || echo n/a)"
+    echo "# profile:       $(cat /sys/firmware/acpi/platform_profile 2>/dev/null || echo n/a) [$(cat /sys/firmware/acpi/platform_profile_choices 2>/dev/null || echo n/a)]"
+    echo "# cpu_input:     ${CPU_INPUT:-none}"
+    echo "# nvme_input:    ${NVME_INPUT:-none}"
+    echo "#"
+    printf "$FMT" time phase 0x93 0x94 0x95 rpm cpu nvme
+  } | tee "$OUT"
+}
+
+sample_phase() {
+  local phase=$1 secs=$2 i r93 r94 r95 rpm cpu nvme
+  for ((i = 0; i < secs; i++)); do
+    r93=$(ec_read "$REG_CTRL")
+    r94=$(ec_read "$REG_SPEED")
+    r95=$(ec_read "$REG_TACHO")
+    if [ "${r95:-0}" -gt 0 ]; then rpm=$((491520 / r95)); else rpm=0; fi
+    cpu=$(read_temp "$CPU_INPUT")
+    nvme=$(read_temp "$NVME_INPUT")
+    printf "$FMT" \
+      "$(date +%T)" "$phase" "${r93:-?}" "${r94:-?}" "${r95:-?}" "$rpm" "$cpu" "$nvme" | tee -a "$OUT"
+    sleep 1
+  done
+}
+
+[ "$(id -u)" -eq 0 ] || { echo "please run with sudo" >&2; exit 1; }
+command -v stress-ng >/dev/null || { echo "stress-ng not found -- install it first" >&2; exit 1; }
+[ -e "$EC_IO" ] || { echo "$EC_IO missing -- load ec_sys: sudo modprobe ec_sys" >&2; exit 1; }
+if systemctl is-active --quiet tpnsfand 2>/dev/null; then
+  echo "tpnsfand is running -- stop it first: sudo systemctl stop tpnsfand" >&2
+  exit 1
+fi
+
+# the report needs full thermal headroom; balanced and low-power throttle too early
+profile=/sys/firmware/acpi/platform_profile
+if [ -r "$profile" ]; then
+  cur=$(cat "$profile")
+  if [ "$cur" != performance ]; then
+    echo "platform profile is '$cur' -- set performance, otherwise the CPU won't get hot enough for meaningful data" >&2
+    echo "switch and rerun: echo performance | sudo tee $profile" >&2
+    exit 1
+  fi
+fi
+
+model=$(dmidecode -s system-version 2>/dev/null)
+[ -z "$model" ] && model=$(dmidecode -s system-product-name 2>/dev/null)
+model=$(printf '%s' "$model" | tr -cs 'A-Za-z0-9' '-' | sed 's/^-//;s/-$//')
+OUT="${PWD}/tpnsfand-report-${model:-unknown}-$(date +%Y%m%d-%H%M%S).txt"
+
+find_inputs
+[ -n "$CPU_INPUT" ] || { echo "coretemp 'Package id 0' not found" >&2; exit 1; }
+
+header
+sample_phase idle "$IDLE_SECS"
+stress-ng --cpu 0 --timeout "${STRESS_SECS}s" >/dev/null 2>&1 &
+sp=$!
+sample_phase stress "$STRESS_SECS"
+wait "$sp" 2>/dev/null
+sp=""
+sample_phase idle "$IDLE_SECS"
+
+[ -n "${SUDO_USER:-}" ] && chown "$SUDO_UID":"$SUDO_GID" "$OUT" 2>/dev/null
+
+echo
+echo "report written to: $OUT"
+echo "submit it via pull request (reports/) or the discussion linked in the README"

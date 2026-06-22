@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=tpnsfand - ThinkPad non-standard EC fan control
+After=multi-user.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/tpnsfand
+Nice=-10
+OOMScoreAdjust=-1000
+Restart=on-failure
+RestartSec=2
+
+# Uncomment and edit to override defaults (no validation is done):
+#Environment=TPNSFAND_INTERVAL=
+#Environment=TPNSFAND_TEMP_FAN_ON=
+#Environment=TPNSFAND_TEMP_FAN_OFF=
+#Environment=TPNSFAND_TEMP_CTRL_EC=
+#Environment=TPNSFAND_TEMP_CTRL_HOST=
+#Environment=TPNSFAND_RPM_LOW=
+#Environment=TPNSFAND_RPM_HIGH=
+#Environment=TPNSFAND_EC_IO=
+#Environment=TPNSFAND_REG_CTRL=
+#Environment=TPNSFAND_REG_SPEED=
+#Environment=TPNSFAND_CTRL_HOST=
+#Environment=TPNSFAND_CTRL_EC=
+#Environment=TPNSFAND_SPEED_MIN=
+#Environment=TPNSFAND_SPEED_MAX=
+#Environment=TPNSFAND_SPEED_OFF=
+
+[Install]
+WantedBy=multi-user.target
