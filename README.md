@@ -20,7 +20,7 @@ your machine overheat.**
 
 - While `tpnsfand` holds host control, the EC does **not** regulate the fan —
   the only remaining hardware safety net is the CPU's own thermal throttle
-  (~100 °C). `tpnsfand` mitigates this with a 1-second watchdog loop and by
+  (~100 °C). `tpnsfand` mitigates this with a 0.5-second watchdog loop and by
   handing control back to the EC above a temperature threshold, but there is no
   independent failsafe.
 - The register layout, speed range, and EC floor may differ between models.
@@ -151,7 +151,7 @@ Models below are the ones the kernel flags as non-standard (`TPACPI_FAN_NS`).
 | ThinkPad L13 Yoga Gen 2 | R1F | ✅ |
 | ThinkPad L13 Yoga Gen 1 | R15 | ❓ |
 | ThinkPad X13 Yoga Gen 2 | N2U | ❓ |
-| ThinkPad X13 Yoga Gen 1 | N2L | ❓ |
+| ThinkPad X13 Yoga Gen 1 | N2L | ✅ |
 | ThinkPad L390 | R10 | ❓ |
 | ThinkPad L380 | R0R | ❓ |
 | ThinkPad 11e Gen 5 GL | R0T | ❓ |
