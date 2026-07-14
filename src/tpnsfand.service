@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 [Unit]
 Description=tpnsfand - ThinkPad non-standard EC fan control
-After=multi-user.target
+After=systemd-modules-load.service
 StartLimitIntervalSec=0
 
 [Service]
@@ -11,6 +11,36 @@ Nice=-10
 OOMScoreAdjust=-1000
 Restart=on-failure
 RestartSec=2
+
+CapabilityBoundingSet=CAP_SYS_NICE CAP_SYS_RESOURCE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+PrivateMounts=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=none
+IPAddressDeny=any
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+KeyringMode=private
 
 # Uncomment and edit to override defaults (no validation is done):
 #Environment=TPNSFAND_INTERVAL=
