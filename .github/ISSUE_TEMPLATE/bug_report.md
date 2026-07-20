@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 
-*Describe the bug**
+**Bug Description**
 <!-- What went wrong: fan stuck on/off, service crash-loop, wrong temperatures, etc. -->
 
 
