@@ -144,22 +144,37 @@ any value.**
 Models below are the ones the kernel flags as non-standard (`TPACPI_FAN_NS`).
 `dmidecode -s bios-version` prints the full BIOS version string (e.g.
 `R1FET64W (1.38)`); its leading three characters are the `LNV3` code (here
-`R1F`), which is what the kernel matches your machine against.
+`R1F`), which is what the kernel matches your machine against. Models that share
+an `LNV3` code run the same EC firmware, so they share fan behaviour.
 
-| Model | LNV3 | Support |
-| --- | --- | --- |
-| ThinkPad L13 Yoga Gen 2 | R1F | ✅ |
-| ThinkPad L13 Yoga Gen 1 | R15 | ❓ |
-| ThinkPad X13 Yoga Gen 2 | N2U | ❓ |
-| ThinkPad X13 Yoga Gen 1 | N2L | ✅ |
-| ThinkPad L390 | R10 | ❓ |
-| ThinkPad L380 | R0R | ❓ |
-| ThinkPad 11e Gen 5 GL | R0T | ❓ |
-| ThinkPad 11e Gen 5 GL-R | R1D | ❓ |
-| ThinkPad 11e Gen 5 KL-Y | R0V | ❓ |
+| Model | Type(s) | LNV3 | Support |
+|---|---|---|---|
+| ThinkPad L13 Gen 2 | 20VH, 20VJ | R1F | ✅ |
+| ThinkPad L13 Yoga Gen 2 | 20VK, 20VL | R1F | ✅ |
+| ThinkPad S2 Gen 6 | 20VM | R1F | ❓ |
+| ThinkPad S2 Yoga Gen 6 | 20VN | R1F | ❓ |
+| ThinkPad L13 Gen 1 | 20R3, 20R4 | R15 | ❓ |
+| ThinkPad L13 Yoga Gen 1 | 20R5, 20R6 | R15 | ❓ |
+| ThinkPad S2 Gen 5 | 20R7 | R15 | ❓ |
+| ThinkPad S2 Yoga Gen 5 | 20R8 | R15 | ❓ |
+| ThinkPad X13 Yoga Gen 2 | 20W8, 20W9 | N39 | ❓ |
+| ThinkPad X13 Yoga Gen 1 | 20SX, 20SY | N2U | ✅ |
+| ThinkPad L390 | 20NR, 20NS | R10 | ❓ |
+| ThinkPad L390 Yoga | 20NT, 20NU | R10 | ❓ |
+| ThinkPad S2 Gen 4 | 20NV | R10 | ❓ |
+| ThinkPad S2 Yoga Gen 4 | 20NW | R10 | ❓ |
+| ThinkPad L380 | 20M5, 20M6 | R0R | ❓ |
+| ThinkPad L380 Yoga | 20M7, 20M8 | R0R | ❓ |
+| ThinkPad S2 Gen 3 | 20L1 | R0R | ❓ |
+| ThinkPad S2 Yoga Gen 3 | 20L2 | R0R | ❓ |
+| ThinkPad 11e Gen 5 GL | 20LR, 20LQ | R0T | ❓ |
+| ThinkPad Yoga 11e Gen 5 GL | 20LN, 20LM | R0T | ❓ |
+| ThinkPad 11e Gen 5 GL-R | 20LR, 20LQ | R1D | ❓ |
+| ThinkPad Yoga 11e Gen 5 GL-R | 20LN, 20LM | R1D | ❓ |
+| ThinkPad 11e Gen 5 KL-Y | 20LR, 20LQ | R0V | ❓ |
+| ThinkPad Yoga 11e Gen 5 KL-Y | 20LN, 20LM | R0V | ❓ |
 
 Legend:
-
 - ✅ **verified** — fan control tested and working.
 - ❓ **no report yet** — suspected compatible (in the kernel NS list), but no
   community report submitted.
